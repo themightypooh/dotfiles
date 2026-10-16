@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Wavegoo bar
+Comment=Liquid Quickshell taskbar
+Exec=qs -c wavegoo
+X-KDE-autostart-phase=2

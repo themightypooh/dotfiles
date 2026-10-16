@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Portfolio visits
+Comment=Desktop widget showing portfolio site visits
+Exec=qs -c visits
+X-KDE-autostart-phase=2

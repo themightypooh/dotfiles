@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Hourglass
+Comment=Desktop sand timer in wavegoo colours
+Exec=qs -c hourglass -d
+X-KDE-autostart-phase=2
