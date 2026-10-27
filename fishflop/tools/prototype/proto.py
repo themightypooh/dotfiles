@@ -326,7 +326,7 @@ class Game:
         box(TANK_R + 15, TANK_B - 30 + gh, 15, gh)
         box(0, (TANK_B - 26 + FLOOR) / 2, 880, (TANK_B - 26 - FLOOR) / 2)
         box(0, FLOOR - 50, 1300, 50)
-        box(-1200, 500, 50, 1200); box(1200, 500, 50, 1200); box(0, 1650, 1300, 50)
+        box(-1200, 500, 50, 1200); box(1200, 500, 50, 1200); box(0, 730, 1300, 50)
         # rock arch with a real hole: two legs + lintel
         for pts in ARCH:
             b = self.world.CreateStaticBody()
@@ -358,6 +358,7 @@ class Game:
                 fl.radial(mx, my, C['punch'], 110)
             self.mouse_prev = (mx, my)
         self.fist_hits(dt)
+        self.pending = []
         for f in self.fish:
             self.fish_ai(f, dt)
         for f in self.fish:
@@ -367,6 +368,9 @@ class Game:
         for _ in range(sub):
             for f in self.fish:
                 self.muscles(f, dt / sub)
+            for body, force, point in self.pending:
+                if point is None: body.ApplyForceToCenter(force, True)
+                else: body.ApplyForce(force, point, True)
             self.world.Step(dt / sub, 8, 3)
         self.check_breaks(dt)
         fl.step(dt)
@@ -376,6 +380,9 @@ class Game:
             return
         mx, my, down, _ = self.mouse
         fv = ((mx - self.fist_last[0]) / dt, (my - self.fist_last[1]) / dt) if hasattr(self, 'fist_last') else (0, 0)
+        if math.hypot(fv[0], fv[1]) * dt > 400: fv = (0, 0)  # cursor jumped, not a swing (same rule as the game)
+        spd = math.hypot(fv[0], fv[1])
+        if spd > 2600: fv = (fv[0] / spd * 2600, fv[1] / spd * 2600)  # same cap as the game
         self.fist_last = (mx, my)
         if down: fv = (fv[0] * 1.25, fv[1] * 1.25)
         for f in self.fish:
@@ -397,19 +404,23 @@ class Game:
             sp = math.hypot(rx, ry)
             if sp < 220: continue
             if sp > 1300: rx, ry = rx / sp * 1300, ry / sp * 1300; sp = 1300
+            maxup = math.sqrt(2 * G * max(0.0, 680 - 170 - cpt[1])) - pv[1] * U
+            if ry * 0.5 > maxup: ry = max(0.0, maxup) / 0.5
             piece = self.piece_of(f, struck)
-            struck.body.ApplyLinearImpulse((rx * struck.mass * 0.6 / U, ry * struck.mass * 0.6 / U), b2v(*cpt), True)
+            struck.body.ApplyLinearImpulse((rx * struck.mass * 0.55 / U, ry * struck.mass * 0.55 / U), b2v(*cpt), True)
             for q in piece:
                 if q is not struck:
-                    q.body.ApplyLinearImpulse((rx * q.mass * 0.4 / U, ry * q.mass * 0.4 / U), q.body.worldCenter, True)
-            hurt = max(0.0, (sp - 500) / 2800)
-            for jj in f.joints:
-                if not jj.broken and (jj.a is struck or jj.b is struck):
-                    jj.damage = getattr(jj, 'damage', 0.0) + hurt
+                    q.body.ApplyLinearImpulse((rx * q.mass * 0.45 / U, ry * q.mass * 0.45 / U), q.body.worldCenter, True)
+            if math.hypot(fv[0], fv[1]) >= 1150 and sp >= 920:
+                tear = None
+                for jj in f.joints:
+                    if jj.broken or not (jj.a is struck or jj.b is struck): continue
+                    if tear is None or (tear.kind == 'fin' and jj.kind != 'fin'): tear = jj
+                if tear is not None: tear.damage = 1.5
             f.stun = max(f.stun, 1.2); f.hitcd = 0.09
             air = not self.in_water(*cpt)
             if air: f.combo = getattr(f, 'combo', 0) + 1
-            self.events.append((round(self.t, 2), f.spec.name, 'HIT', int(sp), 'air' if air else 'water', getattr(f, 'combo', 0)))
+            self.events.append((round(self.t, 2), f.spec.name + str(self.fish.index(f)), 'HIT', int(math.hypot(fv[0], fv[1])), 'air' if air else 'water', getattr(f, 'combo', 0)))
 
     def piece_of(self, f, start):
         seen = {id(start)}; out = [start]; stack = [start]
@@ -450,7 +461,7 @@ class Game:
         if vrel < cruise:
             beat = 0.6 + 0.4 * abs(math.sin(f.t * 2 * math.pi * C['swim_hz']))
             F = f.spec.mass * 900.0 * beat * (1 - max(vrel, 0) / cruise)
-            head.ApplyForceToCenter((F * hdx / U, F * hdy / U), True)
+            self.pending.append((head, (F * hdx / U, F * hdy / U), None))
         f.out = not self.in_water(hx, hy)
         if f.stun > 0 or f.out:
             return
@@ -462,7 +473,7 @@ class Game:
         if vrel < cruise:
             beat = 0.6 + 0.4 * abs(math.sin(f.t * 2 * math.pi * C['swim_hz']))
             F = f.spec.mass * 900.0 * beat * (1 - max(vrel, 0) / cruise)
-            head.ApplyForceToCenter((F * hdx / U, F * hdy / U), True)
+            self.pending.append((head, (F * hdx / U, F * hdy / U), None))
 
     def muscles(self, f, dt):
         sp = f.spec
@@ -517,9 +528,9 @@ class Game:
         inwater = self.in_water(cx, cy)
         buoy = 1.0 if (p.fish.alive and p.kind != "gore") else 0.92
         if not inwater:
-            b.ApplyForceToCenter((0, -m * G / U), True)
+            self.pending.append((b, (0, -m * G / U), None))
             return
-        b.ApplyForceToCenter((0, -m * G * (1 - buoy) / U), True)
+        self.pending.append((b, (0, -m * G * (1 - buoy) / U), None))
         ang = b.angle
         ca, sa = math.cos(ang), math.sin(ang)
         tx, ty = 0.0, 0.0
@@ -543,7 +554,7 @@ class Game:
             kn = C['inv_tau_n'] if vn < 0 else C['inv_tau_n'] * 0.15
             fx = share * (kn * vn * nx + C['inv_tau_t'] * vtx)
             fy = share * (kn * vn * ny + C['inv_tau_t'] * vty)
-            b.ApplyForce((fx / U, fy / U), b2v(wx, wy), True)
+            self.pending.append((b, (fx / U, fy / U), b2v(wx, wy)))
             tx += fx; ty += fy
         # wake: equal and opposite push into the water, no obstacle
         fl.splat(cx, cy, -tx * C['wake'] * dt, -ty * C['wake'] * dt, 28)
@@ -563,11 +574,13 @@ class Game:
                     continue
                 F = jj.j.GetReactionForce(inv).length * U  # -> units
                 T = abs(jj.j.GetReactionTorque(inv)) * U * U
-                lim = C['break_force'] * (0.5 if jj.kind == "fin" else 1.0) * f.spec.mass
+                lim = C['break_force'] * f.spec.mass
+                jj.damage = getattr(jj, 'damage', 0.0) * math.exp(-dt / 1.5)
                 if F > lim * 0.35:
-                    jj.damage = getattr(jj, 'damage', 0.0) + (F - lim * 0.35) / (lim * 0.65)
                     f.stun = max(f.stun, 1.8)
-                r = max(F / lim, getattr(jj, 'damage', 0.0))
+                if F > lim * 1.2:
+                    jj.damage += (F - lim * 1.2) / (lim * 0.8)
+                r = max(F / (lim * 2.0), getattr(jj, 'damage', 0.0))
                 if r > 1.0 and r > worst_r:
                     worst, worst_r = jj, r
             # one break per fish per step: the rest of the body gets the load relieved
@@ -596,7 +609,7 @@ class Game:
             if kept < (n - 1) * 0.6:
                 f.alive = False
                 f.dying = 3.5
-        self.events.append((self.t, f.spec.name, jj.kind, round(jj.s, 2)))
+        self.events.append((self.t, f.spec.name + str(self.fish.index(f)), jj.kind, round(jj.s, 2)))
 
 
 _AB = (270, -431)

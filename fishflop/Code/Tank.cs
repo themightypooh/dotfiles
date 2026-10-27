@@ -22,7 +22,7 @@ public static class Tank
 	public const float StandHalfWidth = 880f;
 	public const float Floor = -560f;
 	public const float RoomHalfWidth = 1150f;
-	public const float Ceiling = 1600f;
+	public const float Ceiling = 680f;     // at the top of the screen, so a juggled fish never leaves view
 
 	public static bool InsideTank( Vector2 p ) => p.x > Left && p.x < Right && p.y > Bottom;
 

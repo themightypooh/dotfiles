@@ -20,7 +20,8 @@ bend side to side in view. They can't twist or roll.
 | Input | What it does |
 |---|---|
 | Swing the mouse into a fish | Hit it: the fish takes your fist's speed. Uppercut from below to launch it out of the water |
-| Hit it again while it's in the air | Air combo (+1). Joints near each hit take damage and tear after a few big hits |
+| Hit it again while it's in the air | Air combo (+1). Normal hits only knock it around, so you can keep a fish up as long as you can |
+| Smash it: fast swing with left mouse held | Tears the joint next to where you hit (head, tail, a chunk of body) |
 | Move the mouse in the water | The fist drags the water along with it; big swipes throw fish around too |
 | Hold left mouse | Clenched fist: hits 25% harder, pushes much more water |
 | Right mouse | Punch: a shockwave out from the fist (in the water) |
@@ -73,9 +74,10 @@ All the feel constants live in `Fish.Tuning` at the top of `Code/Fish.cs`:
 | `BreakForce` | Joint strength, per unit of fish mass; lower it for more gore |
 | `SwimHz`, `SwimAmpDeg`, `MuscleHz` | Swimming and floppiness |
 | `Cruise`, `ThrustAccel` | How fast living fish swim |
-| `MaxHitSpeed` | Fist speed cap; sets how high one hit can launch a fish |
-| `HitStruckShare`, `HitBodyShare` | How much of the hit the struck part takes vs the rest of the fish |
-| `HitDamageStart`, `HitDamageRange` | Direct joint damage from hits. Tuned so a fish survives about 3 max-speed hits before the first tear, and loses its head around hit 5 |
+| `MaxHitSpeed` | Cap on closing speed between fist and fish; also limits launch height |
+| `HitStruckShare`, `HitBodyShare` | How much of a hit the struck part takes vs the rest of the fish (kept close, so normal hits barely strain the body) |
+| `HitBreakSpeed` | A swing at least this fast tears the joint next to where it lands. In practice that's a fast clenched (left mouse) swing. Slower hits never tear |
+| `ImpactBreak`, `StrainStart`, `StrainHealSeconds` | Slams into walls, the floor and other fish: only a single load of `ImpactBreak` × `BreakForce` tears at once. Loads above `StrainStart` leave strain, which heals within a couple of seconds, so knocks can't pile up |
 
 Mouse push strength is in `TankGame.OnFixedUpdate`; the punch is `Fluid.Radial( m, 900f, 110f )`.
 
@@ -106,9 +108,9 @@ What to watch for the first time you press Play:
 
 ## Recording the video (combo version)
 
-Uppercut a goldfish out of the water, then swing up at it each time it starts to fall. The
-combo counter climbs, chunks start tearing off around the third or fourth big hit, and the
-pieces rain back into the tank and bleed into the water.
+Uppercut a goldfish out of the water and juggle it with normal swings for a while. Then hold
+left mouse and smash it: chunks tear off where you hit, rain back into the tank and bleed
+into the water.
 
 ## Recording the video (original notes)
 

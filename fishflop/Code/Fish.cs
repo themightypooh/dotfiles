@@ -66,10 +66,14 @@ public sealed class Fish
 
 		public const float MinHitSpeed = 220f;    // slower contact just shoves
 		public const float MaxHitSpeed = 1300f;   // fist speed that counts, caps launch height
-		public const float HitStruckShare = 0.6f; // the part you hit takes most of it...
-		public const float HitBodyShare = 0.4f;   // ...the rest of the piece is yanked after it
-		public const float HitDamageStart = 500f; // hits faster than this hurt the joints directly
-		public const float HitDamageRange = 2800f; // a max-speed hit does ~0.29 damage: a few big hits before the first tear
+		public const float HitStruckShare = 0.55f; // the part you hit takes a bit more of it...
+		public const float HitBodyShare = 0.45f;   // ...the rest of the piece moves almost together, so normal hits barely strain it
+		public const float HitBreakSpeed = 1150f;  // one hit at least this fast tears the joint next to it (a fast clenched swing)
+
+		// impacts: only a single violent load tears, medium knocks leave strain that heals off
+		public const float ImpactBreak = 2.0f;     // a load this many times BreakForce tears at once (a really hard slam)
+		public const float StrainStart = 1.2f;     // loads above this many times BreakForce leave strain
+		public const float StrainHealSeconds = 1.5f;
 		public const float HitCooldown = 0.09f;
 	}
 
@@ -294,7 +298,7 @@ public sealed class Fish
 		hinge.DampingRatio = Tuning.Damping;
 		hinge.TargetAngle = 0;
 		// hard backstop; normal breaking is the damage model in CheckBreaks
-		hinge.BreakForce = Tuning.BreakForce * Spec.Mass * 2.5f;
+		hinge.BreakForce = Tuning.BreakForce * Spec.Mass * 3.5f;
 		hinge.OnBreak = () => OnJointBroken( fj );
 		hinge.Enabled = true;
 
@@ -509,14 +513,14 @@ public sealed class Fish
 			}
 			if ( !j.Hinge.IsValid() ) continue;
 
-			var lim = Tuning.BreakForce * Spec.Mass * (j.Kind == "fin" ? 0.5f : 1f);
+			var lim = Tuning.BreakForce * Spec.Mass;
 			var force = j.Hinge.LinearStress;
+			j.Damage *= MathF.Exp( -dt / Tuning.StrainHealSeconds ); // knocks heal off: no death by a thousand hits
 			if ( force > lim * 0.35f )
-			{
-				j.Damage += (force - lim * 0.35f) / (lim * 0.65f);
 				Stun = MathF.Max( Stun, 1.8f );
-			}
-			var r = MathF.Max( force / lim, j.Damage );
+			if ( force > lim * Tuning.StrainStart )
+				j.Damage += (force - lim * Tuning.StrainStart) / (lim * (Tuning.ImpactBreak - Tuning.StrainStart));
+			var r = MathF.Max( force / (lim * Tuning.ImpactBreak), j.Damage );
 			if ( r > 1f && r > worstR )
 			{
 				worst = j;
@@ -607,6 +611,11 @@ public sealed class Fish
 		if ( speed > Tuning.MaxHitSpeed ) rel = rel / speed * Tuning.MaxHitSpeed;
 		speed = rel.Length;
 
+		// never punch a fish up into the ceiling hard: cap the upward kick by the headroom left
+		var headroom = MathF.Max( 0, Tank.Ceiling - 170f - contact.y ); // margin covers the rest of the fish above the contact
+		var maxUp = MathF.Sqrt( 2f * Tank.Gravity * headroom ) - partVel.y;
+		if ( rel.y * 0.5f > maxUp ) rel = new Vector2( rel.x, MathF.Max( 0, maxUp ) / 0.5f );
+
 		var piece = PieceOf( struck );
 		struck.Body.ApplyImpulseAt( new Vector3( contact.x, contact.y, 0 ), new Vector3( rel.x, rel.y, 0 ) * (struck.Mass * Tuning.HitStruckShare) );
 		foreach ( var p in piece )
@@ -615,11 +624,18 @@ public sealed class Fish
 			p.Body.ApplyImpulse( new Vector3( rel.x, rel.y, 0 ) * (p.Mass * Tuning.HitBodyShare) );
 		}
 
-		// hard hits hurt the joints next to the impact directly
-		var hurt = MathF.Max( 0, (speed - Tuning.HitDamageStart) / Tuning.HitDamageRange );
-		foreach ( var j in Joints )
-			if ( !j.Broken && (j.A == struck || j.B == struck) )
-				j.Damage += hurt;
+		// normal hits just knock it around; only a smash tears the joint next to the impact.
+		// It's the fist's own speed that counts, so it's your swing, not a fish falling into you.
+		if ( fistVel.Length >= Tuning.HitBreakSpeed && speed >= Tuning.HitBreakSpeed * 0.8f )
+		{
+			FishJoint tear = null;
+			foreach ( var j in Joints )
+			{
+				if ( j.Broken || (j.A != struck && j.B != struck) ) continue;
+				if ( tear is null || (tear.Kind == "fin" && j.Kind != "fin") ) tear = j; // body joints before fins
+			}
+			if ( tear is not null ) tear.Damage = 1.5f; // CheckBreaks tears it this step
+		}
 
 		Stun = MathF.Max( Stun, 1.2f );
 		_hitCooldown = Tuning.HitCooldown;

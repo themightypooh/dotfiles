@@ -173,6 +173,9 @@ public sealed class TankRenderer
 		Rect( -hw, Tank.Floor, hw, 760, new Color32( 44, 40, 46 ), new Color32( 62, 56, 62 ) );
 		Rect( -hw, Tank.Floor, hw, Tank.Floor + 26, new Color32( 70, 60, 54 ), new Color32( 84, 72, 64 ) );
 		Rect( -hw, -700, hw, Tank.Floor, new Color32( 70, 46, 28 ), new Color32( 104, 70, 42 ) );
+		// ceiling with a cornice along the top of the screen: fish knocked up high bounce off it
+		Rect( -hw, Tank.Ceiling, hw, 800, new Color32( 74, 68, 72 ), new Color32( 86, 80, 84 ) );
+		Rect( -hw, Tank.Ceiling - 10, hw, Tank.Ceiling, new Color32( 96, 88, 90 ), new Color32( 120, 112, 114 ) );
 		for ( float x = -hw; x < hw; x += 170 )
 			Line( new[] { new Vector2( x, -700 ), new Vector2( x + 20, Tank.Floor ) }, 2, new Color32( 58, 38, 22 ) );
 

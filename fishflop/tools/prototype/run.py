@@ -164,6 +164,7 @@ class Juggler:
     def __init__(self):
         self.swing = None  # (t0, start, end, dur)
         self.pos = (-300.0, -250.0)
+        self.count = 0
 
     def __call__(self, g, t):
         f = g.fish[0]
@@ -185,7 +186,10 @@ class Juggler:
             side = 1 if (int(t * 3) % 2) else -1
             a = (hx + 40 * side, hy - 120)
             b = (hx - 30 * side, hy + 110)
-            self.swing = (t, a, b, 0.13)
+            self.count += 1
+            smash = self.count % 6 == 0  # every sixth swing is a full-speed clenched smash
+            self.swing = (t, a, b, 0.09 if smash else 0.3)
+            g.fist_last = a  # the swing starts where the fist is put, no teleport speed
             return (a[0], a[1], True, False)
         # drift towards a spot under the fish
         tx, ty = hx, hy - 160
