@@ -1,7 +1,9 @@
 # Fishy Flop (s&box)
 
-A side-view fish tank. Your mouse is a fist in the water. Push the water, fling fish into
-the glass, watch them flop and come apart. There's no goal, no story and no score.
+A side-view fish tank, half full with an open top. Your mouse is a fist. Uppercut a fish out
+of the water, then keep it in the air with more hits. Every airborne hit adds to the combo,
+and hard hits tear the fish apart mid-juggle. There's no story and no score, just a combo
+counter and your best.
 
 ## Open it
 
@@ -17,10 +19,16 @@ bend side to side in view. They can't twist or roll.
 
 | Input | What it does |
 |---|---|
-| Move the mouse in the water | The fist drags the water along with it |
-| Hold left mouse | Clenched fist: a bigger, much stronger push |
-| Right mouse | Punch: a shockwave out from the fist |
+| Swing the mouse into a fish | Hit it: the fish takes your fist's speed. Uppercut from below to launch it out of the water |
+| Hit it again while it's in the air | Air combo (+1). Joints near each hit take damage and tear after a few big hits |
+| Move the mouse in the water | The fist drags the water along with it; big swipes throw fish around too |
+| Hold left mouse | Clenched fist: hits 25% harder, pushes much more water |
+| Right mouse | Punch: a shockwave out from the fist (in the water) |
 | R | Refill the tank (fresh fish, clean water) |
+
+A combo ends when the fish lands back in the water, comes to rest, or goes 3 seconds without
+a hit. Fish that fly out of the tank land on the stand or the floor and flop there. Any living
+fish out of water flops. Fish hitting the surface splash it.
 
 ## How it's built
 
@@ -65,6 +73,9 @@ All the feel constants live in `Fish.Tuning` at the top of `Code/Fish.cs`:
 | `BreakForce` | Joint strength, per unit of fish mass; lower it for more gore |
 | `SwimHz`, `SwimAmpDeg`, `MuscleHz` | Swimming and floppiness |
 | `Cruise`, `ThrustAccel` | How fast living fish swim |
+| `MaxHitSpeed` | Fist speed cap; sets how high one hit can launch a fish |
+| `HitStruckShare`, `HitBodyShare` | How much of the hit the struck part takes vs the rest of the fish |
+| `HitDamageStart`, `HitDamageRange` | Direct joint damage from hits. Tuned so a fish survives about 3 max-speed hits before the first tear, and loses its head around hit 5 |
 
 Mouse push strength is in `TankGame.OnFixedUpdate`; the punch is `Fluid.Radial( m, 900f, 110f )`.
 
@@ -93,7 +104,13 @@ What to watch for the first time you press Play:
    `Fish.Muscles`.
 3. **Fish never break, or break when you breathe on them.** Adjust `Tuning.BreakForce`.
 
-## Recording the video
+## Recording the video (combo version)
+
+Uppercut a goldfish out of the water, then swing up at it each time it starts to fall. The
+combo counter climbs, chunks start tearing off around the third or fourth big hit, and the
+pieces rain back into the tank and bleed into the water.
+
+## Recording the video (original notes)
 
 Record a normal play session with OBS or Steam's game recording. For a demo clip, open with a
 slow stir so the water visibly swirls. Then hold left mouse and swipe a fish hard into the

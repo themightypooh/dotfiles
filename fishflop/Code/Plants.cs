@@ -39,7 +39,7 @@ public sealed class Plants
 			int blades = 5 + rng.Next( 4 );
 			for ( int b = 0; b < blades; b++ )
 			{
-				var h = 300f + (float)rng.NextDouble() * 330f;
+				var h = 170f + (float)rng.NextDouble() * 210f;
 				var strand = Make( new Vector2( x + (float)(rng.NextDouble() - 0.5) * 30f, Tank.GravelTop - 14f ), h, 14,
 					(float)(rng.NextDouble() - 0.5) * 0.35f, 5.5f + (float)rng.NextDouble() * 2.5f, 0.7f, false,
 					new Color32( 40, 95, 45 ), new Color32( 110, 170, 70 ), new Color32( 30, 70, 35 ) );
@@ -56,8 +56,8 @@ public sealed class Plants
 			for ( int b = 0; b < leaves; b++ )
 			{
 				var lean = (b - (leaves - 1) * 0.5f) * 0.2f + (float)(rng.NextDouble() - 0.5) * 0.08f;
-				var h = 150f + (float)rng.NextDouble() * 90f - MathF.Abs( lean ) * 70f;
-				var strand = Make( new Vector2( x + lean * 10f, Tank.GravelTop - 10f ), h, 9, lean, 26f, 0.62f, true,
+				var h = 110f + (float)rng.NextDouble() * 60f - MathF.Abs( lean ) * 50f;
+				var strand = Make( new Vector2( x + lean * 10f, Tank.GravelTop - 10f ), h, 9, lean, 22f, 0.62f, true,
 					new Color32( 35, 110, 50 ), new Color32( 90, 175, 80 ), new Color32( 160, 210, 120 ) );
 				strand.Stiffness = 0.22f;
 				Strands.Add( strand );

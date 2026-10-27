@@ -168,16 +168,21 @@ public sealed class TankRenderer
 
 	void DrawRoom()
 	{
-		// wall behind, and the cabinet the tank stands on
-		Rect( -1200, -700, 1200, 700, new Color32( 34, 30, 34 ), new Color32( 52, 46, 50 ) );
-		var cabTop = Tank.Bottom - Tank.FrameThickness;
-		Rect( -880, -700, 880, cabTop, new Color32( 58, 38, 24 ), new Color32( 92, 62, 38 ) );
-		Rect( -880, cabTop - 14, 880, cabTop, new Color32( 120, 84, 52 ), new Color32( 140, 100, 62 ) );
-		Line( new[] { new Vector2( 0, -700 ), new Vector2( 0, cabTop - 24 ) }, 4, new Color32( 40, 26, 16 ) );
-		foreach ( var x in new[] { -60f, 60f } )
-			Ellipse( new Vector2( x, cabTop - 90 ), 7, 7, new Color32( 190, 160, 90 ), new Color32( 120, 95, 50 ) );
-		// back panel of the tank (seen through the air gap)
-		Rect( Tank.Left, Tank.Surface - 30, Tank.Right, Tank.Lid, new Color32( 70, 86, 96 ), new Color32( 84, 98, 108 ) );
+		// wall with a skirting board, wooden floor, and the low stand the tank sits on
+		var hw = Tank.RoomHalfWidth + 40;
+		Rect( -hw, Tank.Floor, hw, 760, new Color32( 44, 40, 46 ), new Color32( 62, 56, 62 ) );
+		Rect( -hw, Tank.Floor, hw, Tank.Floor + 26, new Color32( 70, 60, 54 ), new Color32( 84, 72, 64 ) );
+		Rect( -hw, -700, hw, Tank.Floor, new Color32( 70, 46, 28 ), new Color32( 104, 70, 42 ) );
+		for ( float x = -hw; x < hw; x += 170 )
+			Line( new[] { new Vector2( x, -700 ), new Vector2( x + 20, Tank.Floor ) }, 2, new Color32( 58, 38, 22 ) );
+
+		var sw = Tank.StandHalfWidth;
+		Rect( -sw, Tank.Floor, sw, Tank.StandTop, new Color32( 58, 38, 24 ), new Color32( 92, 62, 38 ) );
+		Rect( -sw, Tank.StandTop - 12, sw, Tank.StandTop, new Color32( 120, 84, 52 ), new Color32( 140, 100, 62 ) );
+		Line( new[] { new Vector2( 0, Tank.Floor ), new Vector2( 0, Tank.StandTop - 16 ) }, 3, new Color32( 40, 26, 16 ) );
+
+		// back glass of the tank: what you see through the air part, a cooler tint of the wall
+		Rect( Tank.Left, Tank.Surface - 30, Tank.Right, Tank.Rim, new Color32( 58, 64, 72 ), new Color32( 66, 70, 78 ) );
 	}
 
 	Color32 WaterColor( Fluid fl, int i, int j )
@@ -263,26 +268,30 @@ public sealed class TankRenderer
 		for ( int i = 0; i <= Fluid.NX; i++ )
 			top.Add( WaterCorner( fl, i, Fluid.NY ) );
 		for ( int i = 0; i < Fluid.NX; i++ )
-			Quad( top[i], top[i + 1], new Vector2( top[i + 1].x, Tank.Lid ), new Vector2( top[i].x, Tank.Lid ),
-				new Color32( 200, 225, 235, 22 ), new Color32( 200, 225, 235, 22 ), new Color32( 200, 225, 235, 10 ), new Color32( 200, 225, 235, 10 ) );
+			Quad( top[i], top[i + 1], new Vector2( top[i + 1].x, Tank.Rim ), new Vector2( top[i].x, Tank.Rim ),
+				new Color32( 200, 225, 235, 18 ), new Color32( 200, 225, 235, 18 ), new Color32( 200, 225, 235, 8 ), new Color32( 200, 225, 235, 8 ) );
 		Line( top, 4f, new Color32( 190, 230, 240, 170 ) );
 		var under = top.Select( p => p - new Vector2( 0, 7 ) ).ToList();
 		Line( under, 6f, new Color32( 120, 190, 210, 50 ) );
 
-		Quad( new( -520, Tank.Bottom ), new( -380, Tank.Bottom ), new( -120, Tank.Lid ), new( -260, Tank.Lid ),
+		// glare on the front glass
+		Quad( new( -520, Tank.Bottom ), new( -380, Tank.Bottom ), new( -160, Tank.Rim ), new( -300, Tank.Rim ),
 			new Color32( 255, 255, 255, 0 ), new Color32( 255, 255, 255, 0 ), new Color32( 255, 255, 255, 18 ), new Color32( 255, 255, 255, 18 ) );
-		Quad( new( -330, Tank.Bottom ), new( -300, Tank.Bottom ), new( -40, Tank.Lid ), new( -70, Tank.Lid ),
+		Quad( new( -330, Tank.Bottom ), new( -300, Tank.Bottom ), new( -80, Tank.Rim ), new( -110, Tank.Rim ),
 			new Color32( 255, 255, 255, 0 ), new Color32( 255, 255, 255, 0 ), new Color32( 255, 255, 255, 26 ), new Color32( 255, 255, 255, 26 ) );
 
-		// frame: base rail, lid with its rim, corner posts
+		// frame: base rail, glass side walls up to an open rim with a thin top trim
 		var f = Tank.FrameThickness;
+		var w = Tank.WallThickness;
 		var dark = new Color32( 18, 18, 20 );
 		var edge = new Color32( 46, 46, 50 );
+		var glass = new Color32( 150, 190, 205, 70 );
 		Rect( Tank.Left - f, Tank.Bottom - f, Tank.Right + f, Tank.Bottom, dark, edge );
-		Rect( Tank.Left - f, Tank.Lid, Tank.Right + f, Tank.Lid + f, edge, dark );
-		Rect( Tank.Left - f, Tank.Bottom - f, Tank.Left, Tank.Lid + f, dark, dark );
-		Rect( Tank.Right, Tank.Bottom - f, Tank.Right + f, Tank.Lid + f, dark, dark );
-		Rect( Tank.Left - f + 4, Tank.Lid + f, Tank.Right + f - 4, Tank.Lid + f + 8, new Color32( 30, 30, 34 ), new Color32( 30, 30, 34 ) );
+		Rect( Tank.Left - w, Tank.Bottom, Tank.Left, Tank.Rim, glass, glass );
+		Rect( Tank.Right, Tank.Bottom, Tank.Right + w, Tank.Rim, glass, glass );
+		Rect( Tank.Left - w - 2, Tank.Rim - 10, Tank.Left + 2, Tank.Rim, edge, dark );
+		Rect( Tank.Right - 2, Tank.Rim - 10, Tank.Right + w + 2, Tank.Rim, edge, dark );
+		Rect( Tank.Left - f, Tank.Rim - 4, Tank.Right + f, Tank.Rim, new Color32( 200, 225, 235, 60 ), new Color32( 200, 225, 235, 60 ) );
 	}
 
 	// ------------------------------------------------------------------ flora, rock, gravel

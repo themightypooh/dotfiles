@@ -12,6 +12,10 @@ public sealed class FishPart
 	public float S0, S1;
 	public float Mass;
 	public bool Gore;
+	public bool WasInWater = true;
+
+	/// <summary>Hull polygons in the part's local (already mirrored) space.</summary>
+	public readonly List<Vector2[]> LocalPolys = new();
 
 	/// <summary>Collision/drag edges in the part's local (already mirrored) space.</summary>
 	public readonly List<(Vector2 mid, Vector2 normal, float len)> Edges = new();
@@ -59,6 +63,14 @@ public sealed class Fish
 		public const float BreakForce = 5200f;    // per unit of fish mass, s&box force units
 		public const float Cruise = 170f;
 		public const float ThrustAccel = 900f;
+
+		public const float MinHitSpeed = 220f;    // slower contact just shoves
+		public const float MaxHitSpeed = 1300f;   // fist speed that counts, caps launch height
+		public const float HitStruckShare = 0.6f; // the part you hit takes most of it...
+		public const float HitBodyShare = 0.4f;   // ...the rest of the piece is yanked after it
+		public const float HitDamageStart = 500f; // hits faster than this hurt the joints directly
+		public const float HitDamageRange = 2800f; // a max-speed hit does ~0.29 damage: a few big hits before the first tear
+		public const float HitCooldown = 0.09f;
 	}
 
 	public readonly FishSpec Spec;
@@ -75,6 +87,14 @@ public sealed class Fish
 	public bool Alive = true;
 	public float Dying;
 	public float Stun;
+
+	// combo: hits landed while the fish is airborne, and joints torn during it
+	public int Combo;
+	public int ComboBreaks;
+	public float ComboTimer;
+	public Vector2 LastHitPoint;
+	float _hitCooldown;
+	bool _headOutOfWater;
 	float _t;
 	float _turn;
 	float _grace;
@@ -219,6 +239,7 @@ public sealed class Fish
 		{
 			var local = poly.Select( M ).ToList();
 			if ( Area( local.ToArray() ) < 0 ) local.Reverse(); // keep CCW so normals point out
+			part.LocalPolys.Add( local.ToArray() );
 
 			var hull = go.Components.Create<HullCollider>( false );
 			hull.Type = HullCollider.PrimitiveType.Points;
@@ -298,6 +319,8 @@ public sealed class Fish
 		Stun = MathF.Max( 0, Stun - dt );
 		Dying = MathF.Max( 0, Dying - dt );
 		_grace = MathF.Max( 0, _grace - dt );
+		_hitCooldown = MathF.Max( 0, _hitCooldown - dt );
+		UpdateCombo( dt, fluid );
 
 		var connected = ConnectedToHead();
 		Think( dt, fluid );
@@ -338,11 +361,12 @@ public sealed class Fish
 		var center = Head.Body.WorldTransform.PointToWorld( Head.Body.MassCenter );
 		var hx = center.x;
 		var hy = center.y;
+		_headOutOfWater = !fluid.InWater( new Vector2( hx, hy ) );
 		if ( (_goal - new Vector2( hx, hy )).Length < 80 || _rng.NextDouble() < dt * 0.08f )
 		{
 			_goal = new Vector2(
 				Tank.Left + 150 + (float)_rng.NextDouble() * (Tank.Right - Tank.Left - 300),
-				Tank.GravelTop + 90 + (float)_rng.NextDouble() * (Tank.Surface - Tank.GravelTop - 180) );
+				Tank.GravelTop + 70 + (float)_rng.NextDouble() * (Tank.Surface - Tank.GravelTop - 140) );
 		}
 
 		var heading = HeadingRad();
@@ -353,7 +377,7 @@ public sealed class Fish
 		_turn += (Math.Clamp( err, -0.6f, 0.6f ) - _turn) * MathF.Min( 1f, dt * 2f );
 
 		// no swimming while stunned or out of the water
-		if ( Stun > 0 || hy > fluid.SurfaceAt( hx ) ) return;
+		if ( Stun > 0 || _headOutOfWater ) return;
 
 		var flow = fluid.Velocity( new Vector2( hx, hy ) );
 		var dir = new Vector2( MathF.Cos( heading ), MathF.Sin( heading ) );
@@ -380,7 +404,7 @@ public sealed class Fish
 				target = MathF.Sin( _t * 7 + j.S * 9 ) * 0.25f;
 				hz = Tuning.FinHz;
 			}
-			else if ( driven && Stun <= 0 )
+			else if ( driven && Stun <= 0 && !_headOutOfWater )
 			{
 				// travelling wave, amplitude growing towards the tail, plus steering bend
 				target = Tuning.SwimAmpDeg * MathF.PI / 180f * (0.35f + j.S)
@@ -390,7 +414,7 @@ public sealed class Fish
 			}
 			else if ( driven || Dying > 0 )
 			{
-				// the flop: whole-body C-bends whipping side to side
+				// the flop (stunned, dying, or out of the water): whole-body C-bends whipping side to side
 				target = 36f * MathF.PI / 180f * MathF.Sin( _t * 2 * MathF.PI * 3.2f - j.S * 2.5f )
 					* (0.6f + 0.4f * MathF.Sin( _t * 1.7f ));
 				hz = Tuning.MuscleHz;
@@ -419,7 +443,17 @@ public sealed class Fish
 		var m = p.Mass;
 		var g = Tank.Gravity;
 
-		if ( c.y > fluid.SurfaceAt( c.x ) )
+		var inWater = fluid.InWater( c );
+		if ( inWater != p.WasInWater && Tank.InsideTank( c ) )
+		{
+			// crossing the surface: the water splashes up or gets punched down
+			var vy = rb.Velocity.y;
+			fluid.Kick( c.x, Math.Clamp( vy, -1200f, 1200f ) * 0.08f * MathF.Sqrt( m / 0.2f ) );
+			if ( inWater ) fluid.Splat( c, new Vector2( rb.Velocity.x, vy ) * 0.15f, 30 );
+		}
+		p.WasInWater = inWater;
+
+		if ( !inWater )
 		{
 			rb.ApplyForce( new Vector3( 0, -m * g, 0 ) ); // out of the water: it just falls
 			return;
@@ -467,7 +501,8 @@ public sealed class Fish
 				if ( j.Bleed > 0.01f && j.A.Go.IsValid() )
 				{
 					j.Where = j.A.ToWorld( j.LocalA );
-					fluid.Splat( j.Where, Vector2.Zero, 22, j.Bleed * dt * 3 );
+					if ( fluid.InWater( j.Where ) ) // blood is dye: it only shows up in the water
+						fluid.Splat( j.Where, Vector2.Zero, 22, j.Bleed * dt * 3 );
 					j.Bleed *= MathF.Exp( -dt / 3f );
 				}
 				continue;
@@ -505,7 +540,9 @@ public sealed class Fish
 		j.Broken = true;
 		j.Where = j.A.ToWorld( j.LocalA );
 		j.Bleed = j.Kind == "fin" ? 0.25f : 1f;
-		_tank.Fluid.Splat( j.Where, Vector2.Zero, 30, j.Kind == "fin" ? 0.6f : 2.5f );
+		if ( _tank.Fluid.InWater( j.Where ) )
+			_tank.Fluid.Splat( j.Where, Vector2.Zero, 30, j.Kind == "fin" ? 0.6f : 2.5f );
+		if ( Combo > 0 ) ComboBreaks++;
 
 		if ( Alive && j.Kind == "spine" )
 		{
@@ -524,6 +561,148 @@ public sealed class Fish
 		var still = ConnectedToHead();
 		foreach ( var p in Parts )
 			if ( !Alive || !still.Contains( p ) ) p.Gore = true;
+	}
+
+	// ------------------------------------------------------------------ fist
+
+	/// <summary>
+	/// The fist at <paramref name="fist"/> (radius, velocity). Returns hit strength (0 = no hit).
+	/// The struck part takes most of the fist's speed and the rest of its piece is yanked after
+	/// it, so hard hits load the joints next to the impact and can tear them.
+	/// </summary>
+	public float TryHit( Vector2 fist, float radius, Vector2 fistVel, Fluid fluid )
+	{
+		if ( _hitCooldown > 0 ) return 0;
+
+		FishPart struck = null;
+		Vector2 contact = default;
+		float best = radius;
+		foreach ( var p in Parts )
+		{
+			if ( !p.Body.IsValid() ) continue;
+			var l3 = p.Go.WorldTransform.PointToLocal( new Vector3( fist.x, fist.y, 0 ) );
+			var local = new Vector2( l3.x, l3.y );
+			foreach ( var poly in p.LocalPolys )
+			{
+				var d = DistanceToPolygon( local, poly, out var closest );
+				if ( d < best )
+				{
+					best = d;
+					struck = p;
+					contact = p.ToWorld( closest );
+				}
+			}
+		}
+		if ( struck is null ) return 0;
+
+		var partVel = (Vector2)struck.Body.GetVelocityAtPoint( new Vector3( contact.x, contact.y, 0 ) );
+		var rel = fistVel - partVel;
+		var speed = rel.Length;
+		if ( speed < Tuning.MinHitSpeed )
+		{
+			// slow contact: just keep the fist from passing through
+			struck.Body.ApplyImpulseAt( new Vector3( contact.x, contact.y, 0 ), new Vector3( rel.x, rel.y, 0 ) * struck.Mass * 0.3f );
+			return 0;
+		}
+		if ( speed > Tuning.MaxHitSpeed ) rel = rel / speed * Tuning.MaxHitSpeed;
+		speed = rel.Length;
+
+		var piece = PieceOf( struck );
+		struck.Body.ApplyImpulseAt( new Vector3( contact.x, contact.y, 0 ), new Vector3( rel.x, rel.y, 0 ) * (struck.Mass * Tuning.HitStruckShare) );
+		foreach ( var p in piece )
+		{
+			if ( p == struck || !p.Body.IsValid() ) continue;
+			p.Body.ApplyImpulse( new Vector3( rel.x, rel.y, 0 ) * (p.Mass * Tuning.HitBodyShare) );
+		}
+
+		// hard hits hurt the joints next to the impact directly
+		var hurt = MathF.Max( 0, (speed - Tuning.HitDamageStart) / Tuning.HitDamageRange );
+		foreach ( var j in Joints )
+			if ( !j.Broken && (j.A == struck || j.B == struck) )
+				j.Damage += hurt;
+
+		Stun = MathF.Max( Stun, 1.2f );
+		_hitCooldown = Tuning.HitCooldown;
+		LastHitPoint = contact;
+
+		if ( fluid.InWater( contact ) )
+		{
+			fluid.Splat( contact, rel * 0.2f, 34 );
+			if ( speed > 900 ) fluid.Splat( contact, Vector2.Zero, 18, 0.4f ); // bruised: a little blood
+		}
+		else
+		{
+			// a hit in the air keeps the combo going
+			Combo++;
+			ComboTimer = 0;
+		}
+		return speed / Tuning.MaxHitSpeed;
+	}
+
+	/// <summary>Combo ends when the fish gets back in the water, settles somewhere, or goes untouched too long.</summary>
+	void UpdateCombo( float dt, Fluid fluid )
+	{
+		if ( Combo == 0 ) return;
+		ComboTimer += dt;
+		var head = Head.Body;
+		var pos = (Vector2)head.WorldTransform.PointToWorld( head.MassCenter );
+		var resting = head.Velocity.Length < 40f;
+		if ( fluid.InWater( pos ) || resting || ComboTimer > 3f )
+			EndCombo?.Invoke( this );
+	}
+
+	public Action<Fish> EndCombo;
+
+	public void ResetCombo()
+	{
+		Combo = 0;
+		ComboBreaks = 0;
+		ComboTimer = 0;
+	}
+
+	List<FishPart> PieceOf( FishPart start )
+	{
+		var seen = new HashSet<FishPart> { start };
+		var stack = new Stack<FishPart>();
+		stack.Push( start );
+		while ( stack.Count > 0 )
+		{
+			var p = stack.Pop();
+			foreach ( var j in Joints )
+			{
+				if ( j.Broken ) continue;
+				if ( j.A == p && seen.Add( j.B ) ) stack.Push( j.B );
+				if ( j.B == p && seen.Add( j.A ) ) stack.Push( j.A );
+			}
+		}
+		return seen.ToList();
+	}
+
+	static float DistanceToPolygon( Vector2 p, Vector2[] poly, out Vector2 closest )
+	{
+		bool inside = Tank.PointInPolygon( p, poly );
+		float best = float.MaxValue;
+		closest = p;
+		for ( int i = 0; i < poly.Length; i++ )
+		{
+			var a = poly[i];
+			var b = poly[(i + 1) % poly.Length];
+			var ab = b - a;
+			var t = Math.Clamp( Vector2.Dot( p - a, ab ) / MathF.Max( ab.LengthSquared, 1e-6f ), 0f, 1f );
+			var q = a + ab * t;
+			var d = (p - q).Length;
+			if ( d < best )
+			{
+				best = d;
+				closest = q;
+			}
+		}
+		if ( inside )
+		{
+			closest = p;
+			return 0;
+		}
+		return best;
 	}
 
 	static float Area( Vector2[] pts )

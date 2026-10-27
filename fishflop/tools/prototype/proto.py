@@ -15,10 +15,12 @@ U = 40.0  # s&box units per Box2D metre (matches b2SetLengthUnitsPerMeter(40))
 
 # ------------------------------------------------------------------ tank
 TANK_L, TANK_R = -800.0, 800.0
-TANK_B, LID = -450.0, 450.0
-GRAVEL_TOP = -400.0
-SURFACE = 380.0
-NX, NY = 100, 52
+TANK_B, RIM = -470.0, 180.0
+LID = RIM
+GRAVEL_TOP = -425.0
+SURFACE = 0.0
+FLOOR = -560.0
+NX, NY = 100, 29
 DX = (TANK_R - TANK_L) / NX
 DY = (SURFACE - TANK_B) / NY
 G = 850.0
@@ -306,7 +308,7 @@ class Game:
         self.fish = []
         self.t = 0.0
         self.make_tank()
-        layout = [(0, -420, 120, 1), (0, 200, 40, -1), (1, -150, -150, 1), (1, 420, 230, -1), (2, -520, -260, 1), (2, 500, -150, -1)]
+        layout = [(0, -480, -120, 1), (0, 150, -170, -1), (1, -250, -80, 1), (1, 430, -90, -1), (2, -600, -300, 1), (2, 600, -250, -1)]
         for si, x, y, f in layout:
             self.fish.append(Fish(self.world, SPECS[si], x, y, f, self.rng))
         self.mouse = None
@@ -317,17 +319,23 @@ class Game:
         def box(cx, cy, hw, hh):
             b = self.world.CreateStaticBody(position=b2v(cx, cy))
             b.CreatePolygonFixture(box=(hw / U, hh / U), friction=0.6)
-        box(0, TANK_B - 20, 900, 20)
-        box(0, (TANK_B + GRAVEL_TOP) / 2, 820, (GRAVEL_TOP - TANK_B) / 2)
-        box(0, LID + 15, 900, 15)
-        box(TANK_L - 15, 0, 15, 500)
-        box(TANK_R + 15, 0, 15, 500)
+        box(0, TANK_B - 15, 830, 15)
+        box(0, (TANK_B + GRAVEL_TOP) / 2, 800, (GRAVEL_TOP - TANK_B) / 2)
+        gh = (RIM - TANK_B + 30) / 2
+        box(TANK_L - 15, TANK_B - 30 + gh, 15, gh)
+        box(TANK_R + 15, TANK_B - 30 + gh, 15, gh)
+        box(0, (TANK_B - 26 + FLOOR) / 2, 880, (TANK_B - 26 - FLOOR) / 2)
+        box(0, FLOOR - 50, 1300, 50)
+        box(-1200, 500, 50, 1200); box(1200, 500, 50, 1200); box(0, 1650, 1300, 50)
         # rock arch with a real hole: two legs + lintel
         for pts in ARCH:
             b = self.world.CreateStaticBody()
             b.CreatePolygonFixture(vertices=[b2v(x, y) for x, y in pts], friction=0.6)
         for pts in ARCH:
             mark_solid(self.fluid, pts)
+
+    def in_water(self, x, y):
+        return TANK_L < x < TANK_R and y > TANK_B and y < self.surface_at(x)
 
     def surface_at(self, x):
         cx = (x - TANK_L) / DX
@@ -349,6 +357,7 @@ class Game:
             if punch:
                 fl.radial(mx, my, C['punch'], 110)
             self.mouse_prev = (mx, my)
+        self.fist_hits(dt)
         for f in self.fish:
             self.fish_ai(f, dt)
         for f in self.fish:
@@ -361,6 +370,57 @@ class Game:
             self.world.Step(dt / sub, 8, 3)
         self.check_breaks(dt)
         fl.step(dt)
+
+    def fist_hits(self, dt):
+        if self.mouse is None or self.mouse_prev is None:
+            return
+        mx, my, down, _ = self.mouse
+        fv = ((mx - self.fist_last[0]) / dt, (my - self.fist_last[1]) / dt) if hasattr(self, 'fist_last') else (0, 0)
+        self.fist_last = (mx, my)
+        if down: fv = (fv[0] * 1.25, fv[1] * 1.25)
+        for f in self.fish:
+            f.hitcd = max(0.0, getattr(f, 'hitcd', 0.0) - dt)
+            if f.hitcd > 0: continue
+            best, struck, cpt = 26 * (1.15 if down else 1), None, None
+            for p in f.parts:
+                for fx in p.body.fixtures:
+                    sh = fx.shape
+                    lp = p.body.GetLocalPoint(b2v(mx, my))
+                    verts = [(v[0] * U, v[1] * U) for v in sh.vertices]
+                    d, c = dist_poly((lp[0] * U, lp[1] * U), verts)
+                    if d < best:
+                        best, struck = d, p
+                        w = p.body.GetWorldPoint((c[0] / U, c[1] / U)); cpt = (w[0] * U, w[1] * U)
+            if struck is None: continue
+            pv = struck.body.GetLinearVelocityFromWorldPoint(b2v(*cpt))
+            rx, ry = fv[0] - pv[0] * U, fv[1] - pv[1] * U
+            sp = math.hypot(rx, ry)
+            if sp < 220: continue
+            if sp > 1300: rx, ry = rx / sp * 1300, ry / sp * 1300; sp = 1300
+            piece = self.piece_of(f, struck)
+            struck.body.ApplyLinearImpulse((rx * struck.mass * 0.6 / U, ry * struck.mass * 0.6 / U), b2v(*cpt), True)
+            for q in piece:
+                if q is not struck:
+                    q.body.ApplyLinearImpulse((rx * q.mass * 0.4 / U, ry * q.mass * 0.4 / U), q.body.worldCenter, True)
+            hurt = max(0.0, (sp - 500) / 2800)
+            for jj in f.joints:
+                if not jj.broken and (jj.a is struck or jj.b is struck):
+                    jj.damage = getattr(jj, 'damage', 0.0) + hurt
+            f.stun = max(f.stun, 1.2); f.hitcd = 0.09
+            air = not self.in_water(*cpt)
+            if air: f.combo = getattr(f, 'combo', 0) + 1
+            self.events.append((round(self.t, 2), f.spec.name, 'HIT', int(sp), 'air' if air else 'water', getattr(f, 'combo', 0)))
+
+    def piece_of(self, f, start):
+        seen = {id(start)}; out = [start]; stack = [start]
+        while stack:
+            p = stack.pop()
+            for jj in f.joints:
+                if jj.broken: continue
+                for a, b in ((jj.a, jj.b), (jj.b, jj.a)):
+                    if a is p and id(b) not in seen:
+                        seen.add(id(b)); out.append(b); stack.append(b)
+        return out
 
     def fish_ai(self, f, dt):
         f.t += dt
@@ -379,7 +439,8 @@ class Game:
         err = (want - heading + math.pi) % (2 * math.pi) - math.pi
         # positive err = turn left (counter-clockwise): bend the body so the head yaws left
         f.turn += (max(-0.6, min(0.6, err)) - f.turn) * min(1.0, dt * 2.0)
-        if f.stun > 0 or hy > self.surface_at(hx):
+        f.out = not self.in_water(hx, hy)
+        if f.stun > 0 or f.out:
             return
         # muscle thrust along the head, pulsing with the tail beat; relative to the water
         ux, uy = self.fluid.vel(hx, hy)
@@ -390,7 +451,8 @@ class Game:
             beat = 0.6 + 0.4 * abs(math.sin(f.t * 2 * math.pi * C['swim_hz']))
             F = f.spec.mass * 900.0 * beat * (1 - max(vrel, 0) / cruise)
             head.ApplyForceToCenter((F * hdx / U, F * hdy / U), True)
-        if f.stun > 0 or hy > self.surface_at(hx):
+        f.out = not self.in_water(hx, hy)
+        if f.stun > 0 or f.out:
             return
         # muscle thrust along the head, pulsing with the tail beat; relative to the water
         ux, uy = self.fluid.vel(hx, hy)
@@ -411,12 +473,12 @@ class Game:
             alive = f.alive and head_attached and jj.kind != "fin"
             if jj.kind == "fin":
                 hz, tgt = 3.0, math.sin(f.t * 7 + jj.s * 9) * 0.25
-            elif alive and f.stun <= 0:
+            elif alive and f.stun <= 0 and not getattr(f, 'out', False):
                 idx = jj.s
                 tgt = math.radians(sp.__dict__.get('amp', C['swim_amp'])) * (0.35 + idx) * math.sin(f.t * 2 * math.pi * C['swim_hz'] - idx * 5.5)
                 tgt += -f.turn * 0.5 * f.facing
                 hz = C['muscle_hz']
-            elif alive or (f.dying > 0 and jj.kind != "fin"):  # stunned or dying: violent flopping
+            elif alive or (f.dying > 0 and jj.kind != "fin"):  # also: out of water  # stunned or dying: violent flopping
                 tgt = math.radians(36) * math.sin(f.t * 2 * math.pi * 3.2 - jj.s * 2.5) * (0.6 + 0.4 * math.sin(f.t * 1.7))
                 hz = C['muscle_hz']
             else:
@@ -452,7 +514,7 @@ class Game:
         fl = self.fluid
         cx, cy = b.worldCenter[0] * U, b.worldCenter[1] * U
         m = p.mass
-        inwater = cy < self.surface_at(cx)
+        inwater = self.in_water(cx, cy)
         buoy = 1.0 if (p.fish.alive and p.kind != "gore") else 0.92
         if not inwater:
             b.ApplyForceToCenter((0, -m * G / U), True)
@@ -537,11 +599,26 @@ class Game:
         self.events.append((self.t, f.spec.name, jj.kind, round(jj.s, 2)))
 
 
-ARCH = [
-    [(150, -400), (210, -400), (205, -300), (160, -290)],
-    [(330, -400), (390, -400), (385, -295), (340, -300)],
-    [(150, -300), (205, -300), (250, -275), (295, -275), (340, -300), (385, -295), (370, -240), (165, -240)],
-]
+_AB = (270, -431)
+ARCH = [[(_AB[0] + x, _AB[1] + y) for x, y in pc] for pc in [
+    [(-120, 0), (-62, 0), (-58, 92), (-112, 100)],
+    [(62, 0), (120, 0), (112, 100), (58, 92)],
+    [(-112, 100), (-58, 92), (-30, 118), (-40, 150), (-96, 150)],
+    [(-30, 118), (30, 118), (40, 150), (-40, 150)],
+    [(30, 118), (58, 92), (112, 100), (96, 150), (40, 150)]]]
+
+
+def dist_poly(p, poly):
+    if point_in_poly(p[0], p[1], poly): return 0.0, p
+    best, bc = 1e9, p
+    for i in range(len(poly)):
+        a = poly[i]; b = poly[(i + 1) % len(poly)]
+        abx, aby = b[0] - a[0], b[1] - a[1]
+        t = max(0, min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / max(abx * abx + aby * aby, 1e-6)))
+        q = (a[0] + abx * t, a[1] + aby * t)
+        d = math.hypot(p[0] - q[0], p[1] - q[1])
+        if d < best: best, bc = d, q
+    return best, bc
 
 
 def mark_solid(fl, pts):

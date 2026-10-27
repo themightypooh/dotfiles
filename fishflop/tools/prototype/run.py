@@ -5,12 +5,12 @@ from proto import *
 
 W, H = 960, 540
 SS = 2
-VIEW_H = 1000.0
+VIEW_H = 1300.0
 VIEW_W = VIEW_H * W / H
 
 
 def scr(x, y):
-    return ((x + VIEW_W / 2) / VIEW_W * W * SS, (VIEW_H / 2 - y) / VIEW_H * H * SS)
+    return ((x + VIEW_W / 2) / VIEW_W * W * SS, (VIEW_H / 2 - (y - 50)) / VIEW_H * H * SS)
 
 
 def xf(part, lx, ly):
@@ -140,19 +140,57 @@ def draw_water(img, g):
 def frame(g, mouse):
     img = Image.new('RGB', (W * SS, H * SS), (28, 26, 30))
     d = ImageDraw.Draw(img)
-    d.rectangle([scr(TANK_L, LID), scr(TANK_R, TANK_B)], fill=(70, 80, 88))
+    d.rectangle([scr(-1300, FLOOR), scr(1300, -800)], fill=(90, 60, 36))
+    d.rectangle([scr(-880, TANK_B - 26), scr(880, FLOOR)], fill=(80, 54, 32))
+    d.rectangle([scr(TANK_L, RIM), scr(TANK_R, TANK_B)], fill=(60, 66, 74))
     draw_water(img, g)
     d.rectangle([scr(TANK_L, GRAVEL_TOP), scr(TANK_R, TANK_B)], fill=(120, 105, 85))
     for pts in ARCH:
         d.polygon([scr(*p) for p in pts], fill=(95, 92, 88))
     for f in g.fish:
         draw_fish(d, f)
-    d.rectangle([scr(TANK_L - 30, LID + 30), scr(TANK_R + 30, TANK_B - 40)], outline=(15, 15, 15), width=12)
+    d.rectangle([scr(TANK_L - 30, RIM), scr(TANK_L, TANK_B)], fill=(120, 160, 175))
+    d.rectangle([scr(TANK_R, RIM), scr(TANK_R + 30, TANK_B)], fill=(120, 160, 175))
+    d.rectangle([scr(TANK_L - 30, TANK_B), scr(TANK_R + 30, TANK_B - 26)], fill=(20, 20, 22))
     if mouse:
         mx, my = scr(mouse[0], mouse[1])
         r = 14 * SS
         d.rectangle([mx - r, my - r, mx + r, my + r], fill=(240, 200, 160) if not mouse[2] else (255, 150, 120), outline=(40, 20, 10), width=3)
     return img.resize((W, H), Image.LANCZOS)
+
+
+class Juggler:
+    """Closed-loop fist: uppercut fish 0 out of the water, then hit it from below each time it starts falling."""
+    def __init__(self):
+        self.swing = None  # (t0, start, end, dur)
+        self.pos = (-300.0, -250.0)
+
+    def __call__(self, g, t):
+        f = g.fish[0]
+        head = f.parts[0].body
+        hx, hy = head.worldCenter[0] * U, head.worldCenter[1] * U
+        vy = head.linearVelocity[1] * U
+        if self.swing:
+            t0, a, b, dur = self.swing
+            k = (t - t0) / dur
+            if k >= 1:
+                self.swing = None; self.pos = b
+            else:
+                self.pos = (a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k)
+                return (self.pos[0], self.pos[1], True, False)
+        if t < 2.0:
+            return (self.pos[0], self.pos[1], False, False)
+        airborne = not g.in_water(hx, hy)
+        if (not airborne and hy > -260) or (airborne and vy < 150):
+            side = 1 if (int(t * 3) % 2) else -1
+            a = (hx + 40 * side, hy - 120)
+            b = (hx - 30 * side, hy + 110)
+            self.swing = (t, a, b, 0.13)
+            return (a[0], a[1], True, False)
+        # drift towards a spot under the fish
+        tx, ty = hx, hy - 160
+        self.pos = (self.pos[0] + (tx - self.pos[0]) * 0.12, self.pos[1] + (ty - self.pos[1]) * 0.12)
+        return (self.pos[0], self.pos[1], False, False)
 
 
 def mouse_script(t):
@@ -184,9 +222,10 @@ def main():
     dt = 1 / 50
     n = int(secs / dt)
     start = [(f.parts[0].body.position[0] * U, f.parts[0].body.position[1] * U) for f in g.fish]
+    jug = Juggler()
     for i in range(n):
         t = i * dt
-        g.mouse = mouse_script(t)
+        g.mouse = jug(g, t)
         g.step(dt)
         if i % 2 == 0:
             frame(g, g.mouse).save(f"{out}/f{i // 2:05d}.png")

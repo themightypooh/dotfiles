@@ -8,7 +8,7 @@ namespace FishFlop;
 public sealed class Fluid
 {
 	public const int NX = 100;
-	public const int NY = 52;
+	public const int NY = 29;
 	public const float DX = (Tank.Right - Tank.Left) / NX;
 	public const float DY = (Tank.Surface - Tank.Bottom) / NY;
 
@@ -64,6 +64,19 @@ public sealed class Fluid
 		Array.Clear( Surf );
 		Array.Clear( _surfVel );
 		Array.Copy( _base, Tracer, _base.Length );
+	}
+
+	/// <summary>Is this point in the water? Outside the tank there is none.</summary>
+	public bool InWater( Vector2 p ) => Tank.InsideTank( p ) && p.y < SurfaceAt( p.x );
+
+	/// <summary>Something crossed the surface here: push the surface so it splashes and ripples.</summary>
+	public void Kick( float x, float velocity, float width = 40f )
+	{
+		for ( int i = 0; i <= NX; i++ )
+		{
+			var d = (Tank.Left + i * DX - x) / width;
+			_surfVel[i] += velocity * MathF.Exp( -d * d );
+		}
 	}
 
 	public float SurfaceAt( float x )
