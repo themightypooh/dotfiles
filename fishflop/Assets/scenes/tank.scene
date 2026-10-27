@@ -1,0 +1,44 @@
+{
+  "__guid": "8f0d6a51-2b7e-4c4e-9d3a-6f1c2a9b7e10",
+  "GameObjects": [
+    {
+      "__guid": "1c9e4f2a-7b3d-4e6a-8c1f-2d5b9a0e3f71",
+      "Flags": 0,
+      "Name": "Tank",
+      "Enabled": true,
+      "Components": [
+        {
+          "__type": "FishFlop.TankGame",
+          "__guid": "5a7b3c9d-1e2f-4a6b-8c0d-9e1f2a3b4c5d"
+        }
+      ]
+    }
+  ],
+  "SceneProperties": {
+    "FixedUpdateFrequency": 50,
+    "MaxFixedUpdates": 5,
+    "NetworkFrequency": 60,
+    "NetworkInterpolation": true,
+    "PhysicsMode": "Physics2D",
+    "ThreadedAnimation": true,
+    "TimeScale": 1,
+    "UseFixedUpdate": true,
+    "NavMesh": {
+      "Enabled": false,
+      "IncludeStaticBodies": true,
+      "IncludeKeyframedBodies": true,
+      "EditorAutoUpdate": true,
+      "AgentHeight": 64,
+      "AgentRadius": 16,
+      "AgentStepSize": 18,
+      "AgentMaxSlope": 40,
+      "ExcludedBodies": "",
+      "IncludedBodies": ""
+    }
+  },
+  "Title": "tank",
+  "Description": "Fishy Flop tank",
+  "ResourceVersion": 1,
+  "__references": [],
+  "__version": 1
+}
