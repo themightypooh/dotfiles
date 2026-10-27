@@ -53,6 +53,11 @@ fish out of water flops. Fish hitting the surface splash it.
   physics step, so a hard hit leaves recognisable chunks (a head, a tail section) instead of
   confetti. Every tear dumps blood dye, and the open wound keeps bleeding for a few seconds.
   Pieces stay in the tank and slowly sink to the gravel.
+  A tear is a rip, not a cut. The halves get yanked apart and spun. Strands of flesh and sinew
+  stretch across the gap for a moment and snap. The torn ends are ragged, with a flap of skin;
+  the front half keeps the spine bone sticking out and the back half shows the socket. Two or
+  three scraps of torn fish (real physics bits, skin on one side) fly off. Screen shake is
+  heavier than for a hit.
 - **Skin** (`TankRenderer.cs`): one continuous outline per connected piece, driven by the part
   transforms and blended across intact joints. It bends smoothly with no gaps at the hinges.
   Where a joint has torn, the skin ends in a flesh cap with the spine showing.

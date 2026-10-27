@@ -137,6 +137,7 @@ public sealed class TankGame : Component
 		{
 			var fish = new Fish( this, spec, new Vector2( x, y ), facing, _rng );
 			fish.EndCombo = OnComboEnded;
+			fish.OnTear = ( at, strength ) => _shake = MathF.Max( _shake, 16f * strength ); // a rip lands harder than a hit
 			_fish.Add( fish );
 		}
 	}

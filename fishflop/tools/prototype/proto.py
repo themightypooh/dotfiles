@@ -526,7 +526,7 @@ class Game:
         cx, cy = b.worldCenter[0] * U, b.worldCenter[1] * U
         m = p.mass
         inwater = self.in_water(cx, cy)
-        buoy = 1.0 if (p.fish.alive and p.kind != "gore") else 0.92
+        buoy = 1.0 if (p.fish.alive and p.kind not in ("gore", "scrap")) else 0.92
         if not inwater:
             self.pending.append((b, (0, -m * G / U), None))
             return
@@ -536,14 +536,15 @@ class Game:
         tx, ty = 0.0, 0.0
         per = p.perimeter
         for (p0, p1) in p.edges:
-            mxl, myl = (p0[0] + p1[0]) * 0.5 * p.fish.facing, (p0[1] + p1[1]) * 0.5
-            ex, ey = (p1[0] - p0[0]) * p.fish.facing, p1[1] - p0[1]
+            fac = 1 if getattr(p, 'facing_free', False) else p.fish.facing
+            mxl, myl = (p0[0] + p1[0]) * 0.5 * fac, (p0[1] + p1[1]) * 0.5
+            ex, ey = (p1[0] - p0[0]) * fac, p1[1] - p0[1]
             elen = math.hypot(ex, ey)
             if elen < 1e-3: continue
             wx = b.position[0] * U + mxl * ca - myl * sa
             wy = b.position[1] * U + mxl * sa + myl * ca
             nx, ny = (ex * sa + ey * ca) / elen, -(ex * ca - ey * sa) / elen
-            if p.fish.facing < 0: nx, ny = -nx, -ny
+            if fac < 0: nx, ny = -nx, -ny
             vb = b.GetLinearVelocityFromWorldPoint(b2v(wx, wy))
             ux, uy = fl.vel(wx, wy)
             rx, ry = ux - vb[0] * U, uy - vb[1] * U
@@ -590,6 +591,40 @@ class Game:
                 for jj in f.joints:
                     if not jj.broken: jj.damage = min(getattr(jj, 'damage', 0.0), 0.6)
 
+    def rip_apart(self, f, jj):
+        # same as Fish.RipApart: yank the halves apart, spin them, throw scraps
+        a = jj.a.body.angle
+        ax, ay = -f.facing * math.cos(a), -f.facing * math.sin(a)
+        sx, sy = -ay, ax
+        pop = 120.0 if jj.kind == 'fin' else 300.0
+        lat = (random.random() - 0.5) * 160
+        for piece, d in ((self.piece_of(f, jj.a), -1), (self.piece_of(f, jj.b), 1)):
+            spin = d * math.radians(150 + random.random() * 250) * random.choice((-1, 1))
+            for p in piece:
+                kx, ky = ax * pop * d + sx * lat * d, ay * pop * d + sy * lat * d
+                p.body.ApplyLinearImpulse((kx * p.mass / U, ky * p.mass / U), p.body.worldCenter, True)
+                p.body.angularVelocity += spin
+        if jj.kind == 'fin': return
+        for i in range(2 + random.randint(0, 1)):
+            off = (random.random() - 0.5) * f.spec.H * 1.2
+            x, y = jj.where[0] + sx * off, jj.where[1] + sy * off
+            r0 = 6 + f.spec.H * 0.16
+            pts = []
+            for k in range(7):
+                ang = k * 2 * math.pi / 7; r = r0 * (0.7 + random.random() * 0.5)
+                pts.append((math.cos(ang) * r * 1.7, math.sin(ang) * r * 0.6))
+            body = self.world.CreateDynamicBody(position=b2v(x, y), angle=random.random() * 6.28, angularDamping=0.8)
+            fd = b2FixtureDef(shape=b2PolygonShape(vertices=[(px / U, py / U) for px, py in pts]), density=0.015 / (abs(poly_area(pts)) / (U * U)), friction=0.5)
+            fd.filter.groupIndex = jj.a.body.fixtures[0].filterData.groupIndex
+            body.CreateFixture(fd)
+            vx = sx * (random.random() - 0.5) * 500 + ax * (random.random() - 0.5) * 300
+            vy = sy * (random.random() - 0.5) * 500 + ay * (random.random() - 0.5) * 300
+            body.linearVelocity = (jj.a.body.linearVelocity[0] + vx / U, jj.a.body.linearVelocity[1] + vy / U)
+            part = Part(body, 'scrap', mass=0.015); part.fish = f; part.poly = pts
+            part.edges = poly_edges(pts); part.perimeter = sum(math.hypot(e[1][0] - e[0][0], e[1][1] - e[0][1]) for e in part.edges)
+            part.facing_free = True
+            f.parts.append(part)
+
     def joint_pos(self, jj):
         a = jj.a.body
         lx, ly = jj.local
@@ -600,6 +635,9 @@ class Game:
         jj.where = self.joint_pos(jj)
         self.world.DestroyJoint(jj.j)
         jj.broken = True
+        jj.torn_at = self.t
+        jj.seed = random.randint(1, 99999)
+        self.rip_apart(f, jj)
         jj.bleed = 1.0 if jj.kind != "fin" else 0.25
         x, y = jj.where
         self.fluid.splat(x, y, 0, 0, 30, dye=2.5 if jj.kind != "fin" else 0.6)

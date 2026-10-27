@@ -1,4 +1,4 @@
-import math, os, sys, subprocess
+import math, os, sys, subprocess, random
 import numpy as np
 from PIL import Image, ImageDraw
 from proto import *
@@ -87,17 +87,52 @@ def draw_fish(d, f):
             d.polygon([scr(*mid[i]), scr(*mid[i + 1]), scr(*bot[i + 1]), scr(*bot[i])], fill=sp.belly)
         outline = [scr(*p) for p in top] + [scr(*p) for p in reversed(bot)]
         d.line(outline + ([outline[0]] if s0 == 0 else []), fill=lerpc(sp.back, (0, 0, 0), 0.55), width=2)
-        # wound caps
-        for cut_s, seg, sign in ((s0, segs[0], +1), (s1, segs[-1], -1)):
-            if cut_s <= 0.0 or cut_s >= 1.0 and f.joints[n - 1].broken is False:
+        # torn ends: ragged edge, skin flap, bone sticking out of the front half, socket on the back half
+        for cut_s, seg, sign, jidx in ((s0, segs[0], +1, segs[0] - 1), (s1, segs[-1], -1, segs[-1])):
+            if cut_s <= 0.0 or (cut_s >= 1.0 and not f.joints[n - 1].broken):
                 continue
-            ht, hb = sp.h(cut_s)
+            jj = f.joints[jidx]
+            rnd = random.Random(getattr(jj, 'seed', 1))
+            ht, hb = sp.h(cut_s); h = ht + hb
             cx = sp.x(cut_s)
-            bulge = sp.L * 0.035 * sign
-            cap = [xf(P[seg], cx + bulge * math.sin(math.pi * t), ht - (ht + hb) * t) for t in np.linspace(0, 1, 9)]
-            d.polygon([scr(*p) for p in cap], fill=(150, 20, 25), outline=(90, 5, 10))
-            bx, by = scr(*xf(P[seg], cx + bulge * 0.4, (ht - hb) * 0.5 * 0.0))
-            d.ellipse([bx - 3 * SS, by - 3 * SS, bx + 3 * SS, by + 3 * SS], fill=(235, 225, 210))
+            bulge = sp.L * 0.04 * sign
+            skew = (rnd.random() - 0.5) * 1.6
+            ring = []
+            for i in range(13):
+                t = i / 12
+                reach = (0.35 + 0.65 * math.sin(math.pi * t)) * (0.55 + rnd.random() * 1.1)
+                if i % 3 == 1: reach *= 0.25
+                ring.append(xf(P[seg], cx + bulge * reach + bulge * skew * (t - 0.5), ht - h * t))
+            d.polygon([scr(*p) for p in ring], fill=(175, 40, 45), outline=(95, 8, 14))
+            d.polygon([scr(*xf(P[seg], cx - bulge * 0.15, ht)), scr(*xf(P[seg], cx + bulge * (1.2 + rnd.random() * 0.8), ht - h * 0.15)), scr(*xf(P[seg], cx + bulge * 0.25, ht - h * 0.22))], fill=lerpc(sp.back, (95, 8, 14), 0.25))
+            mid = (ht - hb) * 0.5; bw = max(2, h * 0.1) / VIEW_H * H * SS
+            if sign < 0:
+                d.line([scr(*xf(P[seg], cx - bulge * 0.2, mid)), scr(*xf(P[seg], cx + bulge * 2.3, mid))], fill=(238, 230, 212), width=int(max(2, bw)))
+                tx, ty = scr(*xf(P[seg], cx + bulge * 2.3, mid))
+                d.ellipse([tx - bw, ty - bw, tx + bw, ty + bw], fill=(238, 230, 212))
+            else:
+                ox, oy = scr(*xf(P[seg], cx + bulge * 0.35, mid))
+                d.ellipse([ox - bw * 1.3, oy - bw, ox + bw * 1.3, oy + bw], fill=(50, 0, 6))
+    # flesh strands stretching across a fresh tear, snapping as the halves fly apart
+    for jj in f.joints:
+        if not jj.broken or jj.kind == 'fin' or not hasattr(jj, 'torn_at'): continue
+        age = g_time[0] - jj.torn_at
+        if age > 0.45: continue
+        ht, hb = sp.h(jj.s); x = sp.x(jj.s)
+        rnd = random.Random(jj.seed)
+        for k, oy in enumerate((ht * 0.5, 0, -hb * 0.5)):
+            pa = xf(jj.a, x, oy); pb = xf(jj.b, x, oy)
+            dd = math.hypot(pb[0] - pa[0], pb[1] - pa[1]); snap = 60 + rnd.random() * 70
+            if dd > snap: continue
+            wdt = int(max(1, (3.4 * (1 - age / 0.45) * (1 - dd / snap) + 0.6) / VIEW_H * H * SS))
+            sag = ((pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2 - dd * 0.18)
+            d.line([scr(*pa), scr(*sag), scr(*pb)], fill=(210, 190, 175) if k == 1 else (175, 40, 45), width=wdt)
+    # scraps of torn fish
+    for p in P:
+        if p.kind != 'scrap': continue
+        b = p.body
+        pts = [b.GetWorldPoint((px / U, py / U)) for px, py in p.poly]
+        d.polygon([scr(q[0] * U, q[1] * U) for q in pts], fill=(185, 55, 58), outline=lerpc(sp.back, (60, 0, 5), 0.5))
     # pectoral on top
     pec = P[n + 2]
     d.polygon([scr(*xf(pec, x, y)) for (p0, p1) in pec.edges for x, y in [p0]], fill=lerpc(fin, (255, 255, 255), 0.2), outline=finc)
@@ -137,7 +172,11 @@ def draw_water(img, g):
     img.paste(big, (int(x0), int(y0)), mask)
 
 
+g_time = [0.0]
+
+
 def frame(g, mouse):
+    g_time[0] = g.t
     img = Image.new('RGB', (W * SS, H * SS), (28, 26, 30))
     d = ImageDraw.Draw(img)
     d.rectangle([scr(-1300, FLOOR), scr(1300, -800)], fill=(90, 60, 36))

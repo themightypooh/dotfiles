@@ -433,10 +433,13 @@ public sealed class TankRenderer
 			DrawSkin( f, a, b, s0, s1, steps, 0f, Lerp( back, new Color32( 0, 0, 0 ), 0.15f ), back, Lerp( back, belly, 0.7f ), Lerp( belly, new Color32( 0, 0, 0 ), 0.08f ) );
 
 			// open wounds where joints have torn
-			if ( s0 > 0 ) DrawWound( f, a, s0, +1 );
+			if ( s0 > 0 ) DrawWound( f, a, s0, +1, f.Joints[a - 1].Seed );
 			var tailGone = f.Joints[n - 1].Broken;
-			if ( s1 < 1 || (b == n - 1 && tailGone) ) DrawWound( f, b, s1, -1 );
+			if ( s1 < 1 || (b == n - 1 && tailGone) ) DrawWound( f, b, s1, -1, f.Joints[b].Seed );
 		}
+
+		DrawStrands( f );
+		DrawScraps( f );
 
 		var pec = f.PectoralOutline;
 		DrawFin( f, f.Pectoral, pec, (pec[0] + pec[^1]) * 0.5f, A( Lerp( fin, new Color32( 255, 255, 255 ), 0.25f ), 200 ), A( finTip, 150 ), finDark );
@@ -509,26 +512,131 @@ public sealed class TankRenderer
 		}
 	}
 
-	void DrawWound( Fish f, int seg, float s, int sign )
+	static float Hash( int seed, int i )
 	{
-		// exposed flesh bulging out of the cut, with the spine showing
+		unchecked
+		{
+			var x = seed * 73856093 ^ i * 19349663;
+			x ^= x >> 13;
+			x *= 1274126177;
+			return (x & 0xFFFF) / 65535f;
+		}
+	}
+
+	static readonly Color32 Meat = new( 175, 40, 45 );
+	static readonly Color32 MeatDark = new( 95, 8, 14 );
+	static readonly Color32 Bone = new( 238, 230, 212 );
+
+	/// <summary>
+	/// A torn end: ragged, skewed edge of flesh with a flap of skin hanging off. The front half
+	/// keeps the spine bone sticking out; the back half shows the socket it was ripped from.
+	/// </summary>
+	void DrawWound( Fish f, int seg, float s, int sign, int seed )
+	{
 		var spec = f.Spec;
 		var part = f.Parts[seg];
 		var (ht, hb) = spec.H( s );
 		var cx = spec.X( s );
-		var bulge = spec.Length * 0.035f * sign;
+		var h = ht + hb;
+		var bulge = spec.Length * 0.04f * sign;
+		var skew = (Hash( seed, 99 ) - 0.5f) * 1.6f;
+		Vector2 W( float x, float y ) => part.ToWorld( f.M( new Vector2( x, y ) ) );
+
+		const int pts = 13;
 		var ring = new List<Vector2>();
-		for ( int i = 0; i <= 10; i++ )
+		for ( int i = 0; i < pts; i++ )
 		{
-			var t = i / 10f;
-			ring.Add( part.ToWorld( f.M( new Vector2( cx + bulge * MathF.Sin( MathF.PI * t ), ht - (ht + hb) * t ) ) ) );
+			var t = i / (float)(pts - 1);
+			var reach = 0.35f + 0.65f * MathF.Sin( MathF.PI * t );
+			reach *= 0.55f + Hash( seed, i ) * 1.1f;  // ragged
+			if ( i % 3 == 1 ) reach *= 0.25f;         // torn notches
+			var x = cx + bulge * reach + bulge * skew * (t - 0.5f);
+			ring.Add( W( x, ht - h * t ) );
 		}
-		var center = part.ToWorld( f.M( new Vector2( cx + bulge * 0.3f, (ht - hb) * 0.5f ) ) );
-		Fan( center, ring, new Color32( 175, 40, 45 ), new Color32( 95, 8, 14 ), false );
-		var flesh = part.ToWorld( f.M( new Vector2( cx + bulge * 0.45f, (ht - hb) * 0.5f ) ) );
-		var fr = MathF.Max( 2.5f, (ht + hb) * 0.18f );
-		Ellipse( flesh, fr * 1.6f, fr * 1.6f, new Color32( 200, 90, 90 ), new Color32( 160, 40, 45 ), 10 );
-		Ellipse( flesh, fr * 0.7f, fr * 0.7f, new Color32( 240, 232, 215 ), new Color32( 205, 195, 180 ), 8 );
+		var center = W( cx + bulge * 0.25f, (ht - hb) * 0.5f );
+		Fan( center, ring, Meat, MeatDark, false );
+		Line( ring, 1.4f, MeatDark );
+
+		// a flap of torn skin hanging off the top edge, and a smaller one of belly skin
+		var back = Sub( spec.Back );
+		var belly = Sub( spec.Belly );
+		var flapLen = 1.2f + Hash( seed, 50 ) * 0.8f;
+		Tri( W( cx - bulge * 0.15f, ht ), W( cx + bulge * flapLen, ht - h * (0.1f + Hash( seed, 51 ) * 0.15f) ), W( cx + bulge * 0.25f, ht - h * 0.22f ),
+			back, Lerp( back, MeatDark, 0.35f ), Lerp( back, MeatDark, 0.2f ) );
+		Tri( W( cx - bulge * 0.1f, -hb ), W( cx + bulge * (0.8f + Hash( seed, 52 ) * 0.6f), -hb + h * 0.12f ), W( cx + bulge * 0.2f, -hb + h * 0.2f ),
+			belly, Lerp( belly, MeatDark, 0.3f ), Lerp( belly, MeatDark, 0.15f ) );
+
+		var mid = (ht - hb) * 0.5f;
+		var boneW = MathF.Max( 2f, h * 0.1f );
+		if ( sign < 0 )
+		{
+			// the front half keeps the spine: a bone sticking out, with a couple of rib stubs
+			var tip = W( cx + bulge * 2.3f, mid + (Hash( seed, 60 ) - 0.5f) * h * 0.15f );
+			var root = W( cx - bulge * 0.2f, mid );
+			Line( new[] { root, tip }, boneW, Bone );
+			Ellipse( tip, boneW * 0.8f, boneW * 0.8f, Bone, new Color32( 200, 190, 170 ), 8 );
+			for ( int r = 0; r < 2; r++ )
+			{
+				var along = 0.5f + r * 0.6f;
+				var from = W( cx + bulge * along, mid );
+				var to = W( cx + bulge * (along + 0.4f), mid + (r == 0 ? 1 : -1) * h * 0.22f );
+				Line( new[] { from, to }, boneW * 0.45f, Bone );
+			}
+		}
+		else
+		{
+			// the back half: the socket the spine was pulled out of
+			var socket = W( cx + bulge * 0.35f, mid );
+			Ellipse( socket, boneW * 1.3f, boneW * 1.1f, new Color32( 50, 0, 6 ), MeatDark, 10 );
+		}
+	}
+
+	/// <summary>For a moment after a tear, strands of flesh stretch between the halves and snap.</summary>
+	void DrawStrands( Fish f )
+	{
+		var spec = f.Spec;
+		foreach ( var j in f.Joints )
+		{
+			if ( !j.Broken || j.Kind == "fin" || j.TornAt < 0 ) continue;
+			var age = f.Clock - j.TornAt;
+			if ( age > 0.45f ) continue;
+			var (ht, hb) = spec.H( j.S );
+			var x = spec.X( j.S );
+			for ( int k = 0; k < 3; k++ )
+			{
+				var oy = k == 0 ? ht * 0.5f : k == 1 ? 0 : -hb * 0.5f;
+				var pa = j.A.ToWorld( f.M( new Vector2( x, oy ) ) );
+				var pb = j.B.ToWorld( f.M( new Vector2( x, oy ) ) );
+				var d = (pb - pa).Length;
+				var snapAt = 60f + Hash( j.Seed, 70 + k ) * 70f;
+				if ( d > snapAt ) continue; // this strand has snapped
+				var width = 3.4f * (1 - age / 0.45f) * (1 - d / snapAt) + 0.6f;
+				var sag = (pa + pb) * 0.5f + new Vector2( 0, -d * 0.18f );
+				Line( new[] { pa, sag, pb }, width, k == 1 ? new Color32( 210, 190, 175 ) : Meat ); // middle strand is sinew
+			}
+		}
+	}
+
+	void DrawScraps( Fish f )
+	{
+		foreach ( var p in f.Parts )
+		{
+			if ( p.Kind != "scrap" || p.LocalPolys.Count == 0 ) continue;
+			var local = p.LocalPolys[0];
+			var ring = local.Select( p.ToWorld ).ToList();
+			var c = p.ToWorld( Vector2.Zero );
+			var skin = Sub( f.Spec.Back );
+			var n = ring.Count;
+			for ( int i = 0; i < n; i++ )
+			{
+				// edge points on the top side still carry skin; the rest is raw meat
+				var ci = local[i].y > 0 ? skin : MeatDark;
+				var cj = local[(i + 1) % n].y > 0 ? skin : MeatDark;
+				Tri( c, ring[i], ring[(i + 1) % n], Meat, ci, cj );
+			}
+			Line( ring, 1.2f, Lerp( MeatDark, new Color32( 0, 0, 0 ), 0.3f ), true );
+			Line( new[] { c + (ring[0] - c) * 0.6f, c + (ring[n / 2] - c) * 0.6f }, 1.1f, new Color32( 235, 205, 195 ) ); // a streak of fat
+		}
 	}
 
 	void DrawFin( Fish f, FishPart part, Vector2[] outlineRest, Vector2 baseRest, Color32 baseCol, Color32 tipCol, Color32 rayCol )

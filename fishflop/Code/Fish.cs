@@ -40,6 +40,8 @@ public sealed class FishJoint
 	public float Damage;
 	public float Bleed;
 	public Vector2 Where;
+	public float TornAt = -1;   // fish clock when it tore (for the stretching flesh strands)
+	public int Seed;            // makes each torn edge ragged in its own way
 }
 
 /// <summary>
@@ -105,6 +107,11 @@ public sealed class Fish
 	Vector2 _goal;
 	readonly Random _rng;
 	readonly TankGame _tank;
+
+	public float Clock => _t;
+
+	/// <summary>Called when a joint tears (where, how hard). The game uses it for screen shake.</summary>
+	public Action<Vector2, float> OnTear;
 
 	public FishPart Head => Parts[0];
 	public FishPart TailFin => Parts[Spec.Segments];
@@ -544,9 +551,14 @@ public sealed class Fish
 		j.Broken = true;
 		j.Where = j.A.ToWorld( j.LocalA );
 		j.Bleed = j.Kind == "fin" ? 0.25f : 1f;
+		j.TornAt = _t;
+		j.Seed = _rng.Next( 1, 100000 );
 		if ( _tank.Fluid.InWater( j.Where ) )
 			_tank.Fluid.Splat( j.Where, Vector2.Zero, 30, j.Kind == "fin" ? 0.6f : 2.5f );
 		if ( Combo > 0 ) ComboBreaks++;
+
+		RipApart( j );
+		OnTear?.Invoke( j.Where, j.Kind == "fin" ? 0.4f : 1f );
 
 		if ( Alive && j.Kind == "spine" )
 		{
@@ -565,6 +577,96 @@ public sealed class Fish
 		var still = ConnectedToHead();
 		foreach ( var p in Parts )
 			if ( !Alive || !still.Contains( p ) ) p.Gore = true;
+	}
+
+	/// <summary>
+	/// A tear is a rip, not a cut: the two halves get yanked apart and spun,
+	/// and a few scraps of meat fly off the torn ends.
+	/// </summary>
+	void RipApart( FishJoint j )
+	{
+		var rot = j.A.Go.WorldRotation;
+		var a3 = rot * new Vector3( -Facing, 0, 0 ); // along the spine, towards the tail
+		var axis = new Vector2( a3.x, a3.y );
+		var side = new Vector2( -axis.y, axis.x );
+		var pop = j.Kind == "fin" ? 120f : 300f;
+		var lateral = ((float)_rng.NextDouble() - 0.5f) * 160f;
+
+		foreach ( var (piece, dir, spinSign) in new[] { (PieceOf( j.A ), -1f, -1f), (PieceOf( j.B ), 1f, 1f) } )
+		{
+			var spin = spinSign * (150f + (float)_rng.NextDouble() * 250f) * (_rng.Next( 2 ) == 0 ? 1 : -1);
+			foreach ( var p in piece )
+			{
+				if ( !p.Body.IsValid() ) continue;
+				var kick = axis * (pop * dir) + side * (lateral * dir);
+				p.Body.ApplyImpulse( new Vector3( kick.x, kick.y, 0 ) * p.Mass );
+				var av = p.Body.AngularVelocity;
+				p.Body.AngularVelocity = new Vector3( av.x, av.y, av.z + spin ); // degrees per second in 2D
+			}
+		}
+
+		if ( j.Kind == "fin" ) return;
+		var scraps = 2 + _rng.Next( 2 );
+		for ( int i = 0; i < scraps; i++ )
+		{
+			var off = side * (((float)_rng.NextDouble() - 0.5f) * Spec.HalfHeight * 1.2f);
+			var vel = side * (((float)_rng.NextDouble() - 0.5f) * 500f) + axis * (((float)_rng.NextDouble() - 0.5f) * 300f);
+			MakeScrap( j.Where + off, vel, j );
+		}
+	}
+
+	void MakeScrap( Vector2 at, Vector2 vel, FishJoint j )
+	{
+		var go = _tank.Scene.CreateObject();
+		go.Name = "scrap";
+		go.Parent = Root;
+		go.WorldPosition = new Vector3( at.x, at.y, 0 );
+		go.WorldRotation = Rotation.FromYaw( (float)_rng.NextDouble() * 360f );
+
+		var rb = go.Components.Create<Rigidbody>();
+		rb.Gravity = false;
+		rb.MassOverride = 0.015f;
+		rb.AngularDamping = 0.8f;
+
+		// a torn strip of fish: long and ragged; the top edge (first half of the points) still has skin on it
+		var n = 7;
+		var poly = new Vector2[n];
+		var r0 = 6f + Spec.HalfHeight * 0.16f;
+		for ( int i = 0; i < n; i++ )
+		{
+			var ang = i * MathF.PI * 2 / n;
+			var r = r0 * (0.7f + (float)_rng.NextDouble() * 0.5f);
+			poly[i] = new Vector2( MathF.Cos( ang ) * r * 1.7f, MathF.Sin( ang ) * r * 0.6f );
+		}
+
+		var part = new FishPart { Go = go, Body = rb, Kind = "scrap", Mass = 0.015f, Gore = true, WasInWater = _tank.Fluid.InWater( at ) };
+		part.LocalPolys.Add( poly );
+		for ( int i = 0; i < n; i++ )
+		{
+			var a = poly[i];
+			var b = poly[(i + 1) % n];
+			var e = b - a;
+			var len = e.Length;
+			part.Edges.Add( ((a + b) * 0.5f, new Vector2( e.y, -e.x ) / len, len) );
+			part.Perimeter += len;
+		}
+
+		var hull = go.Components.Create<HullCollider>( false );
+		hull.Type = HullCollider.PrimitiveType.Points;
+		hull.Points = poly.Select( p => new Vector3( p.x, p.y, 0 ) ).ToList();
+		hull.Friction = 0.5f;
+		hull.Enabled = true;
+
+		// it starts inside the torn ends: don't let it shove them
+		foreach ( var other in new[] { j.A, j.B } )
+		{
+			var f = go.Components.Create<PhysicsFilter>( false );
+			f.Body = other.Go;
+			f.Enabled = true;
+		}
+
+		rb.Velocity = new Vector3( vel.x, vel.y, 0 ) + j.A.Body.Velocity;
+		Parts.Add( part );
 	}
 
 	// ------------------------------------------------------------------ fist
